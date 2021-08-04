@@ -69,7 +69,8 @@ PostgreSQL uses environment variables for configuration. The most important one 
 
 ```bash
 $ # create secret from literal
-$ kubectl create secret generic postgresql-secrets --from-literal=POSTGRES_PASSWORD=tes6Aev8
+$ kubectl create secret generic postgresql-secrets \
+    --from-literal=POSTGRES_PASSWORD=tes6Aev8
 
 $ # describe secret
 $ kubectl describe secrets postgresql-secrets
@@ -193,3 +194,67 @@ Address: 172.17.0.3
 / # exit
 pod "busybox" deleted
 ```
+
+## Connection pooling
+
+> [Postgres connection pool on Kubernetes in 1 minute](https://jmrobles.medium.com/postgres-connection-pool-on-kubernetes-in-1-minute-80b8020315ef)
+
+First we create a _Config Map_ for the following values:
+
+- `DB_HOST`: DNS hostname of our PostgreSQL service
+- `DB_USER`: PostgreSQL database user
+
+`DB_PASSWORD` will be set using the previously created secret. `POOL_MODE` is set to `transaction` and `SERVER_RESET_QUERY` to `DISCARD ALL` by default in the respective deployment manifest.
+
+```bash
+$ kubectl create configmap pgbouncer-configs \
+    --from-literal=DB_HOST=postgresql-svc.postgres.svc.cluster.local \
+    --from-literal=DB_USER=postgres
+```
+
+Now we can apply our deployment for [PgBouncer](https://www.pgbouncer.org/) that is based on this [Docker image](https://hub.docker.com/r/edoburu/pgbouncer/) for PgBouncer 1.15.0.
+
+```bash
+$ kubectl apply -f pgbouncer.yaml
+deployment.apps/pgbouncer created
+
+$ # now we create a service for the deployment
+$ kubectl expose deployment pgbouncer --name=pgbouncer-svc
+service/pgbouncer exposed
+```
+
+Let’s check the stats.
+
+```bash
+$ kubectl run -it --rm pg-psql --image=postgres:13.3 --restart=Never \
+    --env="PGPASSWORD=tes6Aev8" -- \
+    psql -h pgbouncer-svc.postgres.svc.cluster.local -U postgres -d pgbouncer
+If you don't see a command prompt, try pressing enter.
+pgbouncer=# \x
+Expanded display is on.
+
+pgbouncer=# SHOW SERVERS;
+-[ RECORD 1 ]+------------------------
+type         | S
+user         | postgres
+database     | postgres
+state        | used
+addr         | 172.17.0.5
+port         | 5432
+local_addr   | 172.17.0.6
+local_port   | 59960
+connect_time | 2021-08-04 11:25:19 UTC
+request_time | 2021-08-04 11:25:59 UTC
+wait         | 0
+wait_us      | 0
+close_needed | 0
+ptr          | 0x7fa02cb54100
+link         |
+remote_pid   | 183
+tls          |
+
+pgbouncer=# \q
+pod "pg-psql" deleted
+```
+
+As we can so see PgBouncer only detects one server so far. The reason for that is, each server is listening on the same host and port. We need to fix that.
