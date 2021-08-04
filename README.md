@@ -223,7 +223,7 @@ $ kubectl expose deployment pgbouncer --name=pgbouncer-svc
 service/pgbouncer exposed
 ```
 
-Let’s check the stats.
+Let’s check the server list.
 
 ```bash
 $ kubectl run -it --rm pg-psql --image=postgres:13.3 --restart=Never \
